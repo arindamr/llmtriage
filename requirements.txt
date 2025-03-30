@@ -1,0 +1,29 @@
+# requirements.txt
+
+langchain-core>=0.3.0,<0.4.0
+langchain>=0.3,<0.4
+langchain-community>=0.3,<0.4
+langchain-openai>=0.2,<0.3
+langchain-text-splitters>=0.3,<0.4
+
+# -- OpenAI Client --
+# Required by langchain-openai
+openai>=1.0.0,<2.0.0
+
+# -- Pydantic (V2 Required) --
+# Crucial for FastAPI and modern LangChain
+pydantic>=2.0,<3.0
+pydantic-settings>=2.0.0,<3.0.0  # For env var management in Pydantic v2
+typing-extensions>=4.5.0,<5.0.0  # Required by Pydantic v2
+
+# -- Web Framework (FastAPI) --
+fastapi>=0.115.0,<0.116.0
+uvicorn[standard]>=0.27.0,<0.31.0
+
+# -- Utilities --
+# For loading .env files
+python-dotenv>=1.0.0,<2.0.0
+
+# -- Optional (Uncomment if needed) --
+# Required by FastAPI for form data/file uploads
+python-multipart>=0.0.9,<0.0.10
