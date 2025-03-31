@@ -15,7 +15,7 @@ from langchain.prompts.chat import ChatPromptTemplate, MessagesPlaceholder  # Up
 from langchain.tools import BaseTool, tool  # StructuredTool is not required for this version
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain.agents import AgentExecutor, create_openai_tools_agent
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolCall, ToolMessage, BaseMessage
 from langchain.callbacks.base import BaseCallbackHandler
 
 # For environment variables (like API keys)
@@ -50,13 +50,23 @@ class DiagnosticState:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         step_data = {"timestamp": timestamp, "type": step_type, **data}
         self.steps.append(step_data)
+        logging.info(f"Step Data: %s", step_data)
         logging.info(f"State Step Added: {step_type} - {data.get('tool', data.get('message', 'N/A'))}")
 
         # Also add relevant info to Langchain message history
         if step_type == "llm_thought":
-             pass # Usually captured within the AIMessage that follows
+            pass  # Usually captured within the AIMessage that follows
         elif step_type == "tool_call":
-             pass # Represented by AIMessage's tool_calls attribute
+            # Add a ToolCall entry for the tool call
+            tool_call_id = data.get("tool_call_id")
+            if tool_call_id:
+                self.history.append(ToolCall(
+                    name=data.get("tool"), 
+                    args=data.get("input", {}), 
+                    id=tool_call_id
+                ))
+            else:
+                logging.warning("Tool call step missing tool_call_id. Not adding to history.")
         elif step_type == "tool_result":
             # Check if tool_call_id is present and valid
             if "tool_call_id" in data and data["tool_call_id"]:
@@ -69,7 +79,7 @@ class DiagnosticState:
                 # Optionally, add as a system message or observation if needed.
                 # self.history.append(SystemMessage(content=f"Observation from tool {data.get('tool', 'unknown')}: {data['output']}"))
 
-        elif step_type == "error":
+        elif step_type in ("system_error", "error"):
              # Check if tool_call_id is present and valid
              if "tool_call_id" in data and data["tool_call_id"]:
                 self.history.append(ToolMessage(
@@ -111,17 +121,16 @@ class DiagnosticState:
         }
 
     def get_langchain_history(self) -> List[BaseMessage]:
-        """Formats history for Langchain agent input"""
+        """Formats history for Langchain agent input."""
         processed_history = []
-        # Check if self.history contains dicts or BaseMessages and convert/use directly
-        temp_history_to_process = list(self.history) # Work on a copy
+        tool_call_ids = set()  # Track valid tool_call_ids from tool_calls
 
-        for item in temp_history_to_process:
+        for item in self.history:
             if isinstance(item, BaseMessage):
                 processed_history.append(item)
             elif isinstance(item, dict):
                 role = item.get("role")
-                content = item.get("content", "") # Ensure content is not None
+                content = item.get("content", "")
                 tool_calls = item.get("tool_calls")
                 tool_call_id = item.get("tool_call_id")
 
@@ -130,18 +139,15 @@ class DiagnosticState:
                 elif role == "assistant" or role == "ai":
                     if tool_calls:
                         processed_history.append(AIMessage(content=str(content), tool_calls=tool_calls))
+                        # Register tool_call_ids for validation
+                        tool_call_ids.update(tc.get("id") for tc in tool_calls if "id" in tc)
                     else:
                         processed_history.append(AIMessage(content=str(content)))
-                elif role == "tool":
-                    if tool_call_id: # Only add ToolMessage if tool_call_id is present
-                         processed_history.append(ToolMessage(content=str(content), tool_call_id=tool_call_id))
-                    else:
-                         logging.warning(f"Skipping ToolMessage creation due to missing tool_call_id: {item}")
-
-        # Update self.history to be the BaseMessage list for future Langchain calls
-        # Note: This assumes subsequent calls within the *same* DiagnosticState instance
-        # If state is persisted and reloaded, ensure reloading reconstructs BaseMessages
-        # self.history = processed_history # Be cautious with this line if state is serialized/deserialized simply as dicts
+                elif role == "tool" and tool_call_id in tool_call_ids:
+                    # Only include ToolMessage if tool_call_id is valid and preceded by a tool_call
+                    processed_history.append(ToolMessage(content=str(content), tool_call_id=tool_call_id))
+                else:
+                    logging.warning(f"Skipping invalid ToolMessage: {item}")
 
         return processed_history
 
@@ -398,6 +404,7 @@ class TriageSystem:
         }
 
         try:
+            print(f"agent_input = {agent_input}")  # Debugging log
             response = self.agent_executor.invoke(agent_input)
             final_output = response.get("output", "Agent did not provide a final output.")
             diagnostic_state.add_step("final_diagnosis", {"diagnosis": final_output})

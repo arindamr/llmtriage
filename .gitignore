@@ -9,7 +9,7 @@ venv/
 
 # Ignore build files
 frontend/build/
-node_modules/
+frontend/node_modules/
 
 # Ignore system files
 .DS_Store
